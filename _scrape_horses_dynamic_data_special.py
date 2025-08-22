@@ -1,12 +1,12 @@
 # -----------------------------
-# IMPORTS + UTILS
+# IMPORTS + UTILS_special
 # -----------------------------
 import sys
 
 import time
 import re
 from datetime import datetime
-from utils import (
+from utils_special import (
     log, sanitize_text, clean_placing, convert_finish_time,
     get_distance_group, get_turn_count, get_draw_group,
     get_jump_type, get_distance_group_from_row, get_season_code
@@ -28,7 +28,6 @@ DEBUG_LEVEL = "INFO"  # "OFF", "INFO", "DEBUG", "TRACE"
 CHROME_DRIVER_PATH = './chromedriver'
 
 from _horse_dynamic_stats_cleaned import (
-    sanitize_text,
     build_exact_distance_pref,
     convert_finish_time,
     upsert_running_position,
@@ -46,15 +45,12 @@ from _horse_dynamic_stats_cleaned import (
     upsert_trainer_combo,
     upsert_jockey_trainer_combo,
     create_jockey_trainer_combo_table,
-    get_distance_group,
-    get_draw_group,
     build_draw_pref,
     upsert_draw_pref,
     create_draw_pref_table,
     build_weight_pref_from_dict,
     create_weight_pref_table,
     upsert_weight_pref,
-    clean_placing,
     build_hwtr_per_class,
     upsert_hwtr_trend,
     build_class_jump_pref,
@@ -62,9 +58,11 @@ from _horse_dynamic_stats_cleaned import (
     create_class_jump_pref_table,
     rebuild_running_style_pref,
     create_horse_rating_table,
-    upsert_horse_rating
+    upsert_horse_rating,
+    create_running_style_pref_table,
+    migrate_turncount_to_real,
+    create_race_field_size_table
 )
-from _horse_dynamic_stats_cleaned import create_running_style_pref_table, migrate_turncount_to_real, create_race_field_size_table
 
 # -----------------------------
 # DYNAMIC STATS UPSERT (LOCAL)
@@ -82,7 +80,7 @@ def get_race_field_size(race_date_str, race_no, race_course):
 
     # 1) Try the local cache
     try:
-        conn = sqlite3.connect("hkjc_horses_dynamic.db")
+        conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
         cur = conn.cursor()
         cur.execute(
             "SELECT FieldSize FROM race_field_size WHERE RaceDate=? AND RaceNo=? AND RaceCourse=?",
@@ -119,7 +117,7 @@ def get_race_field_size(race_date_str, race_no, race_course):
             field_size = len(rows) - 1  # exclude header
             if field_size > 0:
                 try:
-                    conn = sqlite3.connect("hkjc_horses_dynamic.db")
+                    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
                     cur = conn.cursor()
                     cur.execute(
                         "INSERT OR REPLACE INTO race_field_size (RaceDate, RaceNo, RaceCourse, FieldSize) VALUES (?, ?, ?, ?)",
@@ -136,7 +134,7 @@ def get_race_field_size(race_date_str, race_no, race_course):
     return None
 
 def create_going_pref_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic.db")
+    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS horse_going_pref (
@@ -163,7 +161,7 @@ def upsert_dynamic_stats(
     course_pref,
     running_style
 ):
-    conn = sqlite3.connect('hkjc_horses_dynamic.db')
+    conn = sqlite3.connect('hkjc_horses_dynamic_special.db')
     cursor = conn.cursor()
 
     cursor.execute('''
@@ -600,15 +598,15 @@ if __name__ == "__main__":
     create_trainer_combo_table()
 
     # 2. Handle jockey-trainer table with migration
-    from _horse_dynamic_stats_cleaned import migrate_jockey_trainer_table
+    from _horse_dynamic_stats_special import migrate_jockey_trainer_table
     migrate_jockey_trainer_table()  # First migrate existing tables
     create_jockey_trainer_combo_table()  # Then ensure proper table structure
 
     # 3. Handle draw preferences
     create_draw_pref_table()  # ✅ Ensure table exists
-    ensure_column_exists("hkjc_horses_dynamic.db", "horse_draw_pref", "ID", "INTEGER")
-    ensure_column_exists("hkjc_horses_dynamic.db", "horse_draw_pref", "RaceCourse", "TEXT")
-    ensure_column_exists("hkjc_horses_dynamic.db", "horse_draw_pref", "LastUpdate", "TIMESTAMP")
+    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_draw_pref", "ID", "INTEGER")
+    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_draw_pref", "RaceCourse", "TEXT")
+    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_draw_pref", "LastUpdate", "TIMESTAMP")
 
     # 4. Create remaining tables
     create_running_position_table()  # ← Important: Keep this single call
@@ -633,7 +631,7 @@ if __name__ == "__main__":
             failure += 1
             continue
 
-        horse_url = f"https://racing.hkjc.com/racing/information/English/Horse/Horse.aspx?HorseId={horse_id.strip()}"
+        horse_url = f"https://racing.hkjc.com/racing/information/English/Horse/OtherHorse.aspx?HorseId={horse_id.strip()}"
         try:
             log("INFO", f"\nProcessing: {horse_id}")
             horse_data = extract_dynamic_stats(horse_url)
@@ -764,7 +762,7 @@ if __name__ == "__main__":
                 # Debug/verify: display newest → oldest seasons for Class Jump (no schema change)
                 if DEBUG_LEVEL in ("DEBUG", "TRACE"):
                     try:
-                        from _horse_dynamic_stats_cleaned import fetch_class_jump_pref_ordered
+                        from _horse_dynamic_stats_special import fetch_class_jump_pref_ordered
                         ordered = fetch_class_jump_pref_ordered(horse_data["HorseID"])
                         log("DEBUG", f"ClassJump (newest→oldest) for {horse_data['HorseID']}: {ordered}")
                     except Exception as qerr:
@@ -909,7 +907,7 @@ if __name__ == "__main__":
                     draw_pref_dict = build_draw_pref(horse_data["RawRows"])
                     upsert_draw_pref(horse_data["HorseID"], draw_pref_dict)
                     if DEBUG_LEVEL in ("DEBUG", "TRACE"):
-                        from _horse_dynamic_stats_cleaned import fetch_draw_pref_ordered
+                        from _horse_dynamic_stats_special import fetch_draw_pref_ordered
                         ordered = fetch_draw_pref_ordered(horse_data["HorseID"])
                         log("DEBUG", f"DrawPref (newest first) for {horse_data['HorseID']}: {ordered[:3]}")
                 except Exception as e:
@@ -921,7 +919,7 @@ if __name__ == "__main__":
                     if DEBUG_LEVEL in ("DEBUG", "TRACE"):
                         log("DEBUG", f"RunningStylePref updated for {horse_id}: {upserts} rows across {groups} groups")
                         try:
-                            from _horse_dynamic_stats_cleaned import fetch_running_style_pref_ordered
+                            from _horse_dynamic_stats_special import fetch_running_style_pref_ordered
                             ordered = fetch_running_style_pref_ordered(horse_id)
                             # Display seasons in proper order
                             seasons = sorted(set(row[1] for row in ordered), 

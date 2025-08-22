@@ -1,98 +1,91 @@
 import re
-import unicodedata
 from datetime import datetime
-import inspect
+import ftfy
 
-def log(level, *args, **kwargs):
-    """Simple logging helper with module-level debug control.
-
-    Uses the caller's ``DEBUG_LEVEL`` variable if present (defaults to
-    ``"INFO"``). Levels: ``OFF`` < ``INFO`` < ``DEBUG`` < ``TRACE``.
-    """
-    levels = {"OFF": 0, "INFO": 1, "DEBUG": 2, "TRACE": 3}
-    caller_frame = inspect.currentframe().f_back
-    debug_level = caller_frame.f_globals.get("DEBUG_LEVEL", "INFO")
-    current_level = levels.get(debug_level, 1)
-    msg_level = levels.get(level, 0)
-    if msg_level <= current_level:
-        print(f"[{level}]", *args, **kwargs)
+def log(level, message):
+    if level == "ERROR":
+        print(f"[ERROR] {message}")
+    elif level == "WARNING":
+        print(f"[WARNING] {message}")
+    elif level == "INFO":
+        print(f"[INFO] {message}")
+    elif level == "DEBUG":
+        print(f"[DEBUG] {message}")
+    elif level == "TRACE":
+        print(f"[TRACE] {message}")
 
 def sanitize_text(text):
     if not text:
         return ""
-    try:
-        text = str(text)
-        text = re.sub(r'[^\x00-\x7F]+', '', text)
-        return text.strip()
-    except:
-        return ""
+    text = str(text)
+    text = ftfy.fix_text(text)
+    text = re.sub(r'\s+', ' ', text)
+    text = text.strip()
+    return text
 
 def clean_placing(placing_text):
-    clean_text = sanitize_text(placing_text)
-    digits_only = re.sub(r'[^\d]', '', clean_text)
-    return int(digits_only) if digits_only.isdigit() and int(digits_only) > 0 else None
+    if not placing_text:
+        return None
+    placing_text = sanitize_text(placing_text)
+    placing_clean = re.sub(r'[^\d]', '', placing_text)
+    try:
+        return int(placing_clean) if placing_clean else None
+    except ValueError:
+        return None
 
 def convert_finish_time(time_str):
     if not time_str:
         return None
+    time_str = sanitize_text(time_str)
+    parts = time_str.split('.')
     try:
-        time_str = time_str.strip().replace(":", ".")
-        parts = time_str.split(".")
         if len(parts) == 3:
             mins, secs, hundredths = parts
-            return round(int(mins) * 60 + int(secs) + int(hundredths) / 100, 2)
+            return int(mins) * 60 + int(secs) + int(hundredths) / 100
         elif len(parts) == 2:
             secs, hundredths = parts
-            return round(int(secs) + int(hundredths) / 100, 2)
+            return int(secs) + int(hundredths) / 100
         else:
             return None
-    except:
+    except ValueError:
         return None
 
-def safe_int(value):
+def safe_int(value, default=0):
     try:
         return int(value)
-    except:
-        return None
+    except (ValueError, TypeError):
+        return default
 
-def safe_float(value):
+def safe_float(value, default=0.0):
     try:
         return float(value)
-    except:
-        return None
+    except (ValueError, TypeError):
+        return default
 
 def parse_weight(weight_str):
-    try:
-        return int(weight_str.replace("lb", "").strip())
-    except:
+    if not weight_str:
         return None
+    weight_str = sanitize_text(weight_str)
+    match = re.search(r'(\d+)', weight_str)
+    if match:
+        return int(match.group(1))
+    return None
 
-def parse_lbw(lbw_str, placing):
-    lbw_str = sanitize_text(lbw_str)
-    if placing == 1:
+def parse_lbw(lbw_str):
+    if not lbw_str:
         return 0.0
-    try:
-        return float(lbw_str)
-    except:
-        return None
-
-def get_season_code(date_obj):
-    if date_obj.month >= 9:
-        return f"{date_obj.year%100:02d}/{(date_obj.year+1)%100:02d}"
-    else:
-        return f"{(date_obj.year-1)%100:02d}/{date_obj.year%100:02d}"
+    lbw_str = sanitize_text(lbw_str)
+    if lbw_str.upper() in ['DH', 'DHD', 'DIST', 'NSE']:
+        return 0.0
+    match = re.search(r'(\d+\.?\d*)', lbw_str)
+    if match:
+        return float(match.group(1))
+    return 0.0
 
 def get_distance_group(race_course, course_type, distance):
-    course_type = course_type.upper()
-    race_course = race_course.upper()
-
     if race_course == "ST":
         if course_type == "AWT":
-            if distance <= 1000:
-                return "Sprint"
             if distance <= 1200:
-                return "Short"
-            elif distance <= 1400:
                 return "Short"
             elif distance <= 1650:
                 return "Mid"
@@ -124,123 +117,77 @@ def get_distance_group(race_course, course_type, distance):
             return "Endurance"
     return "Unknown"
 
-def get_distance_group_from_row(course_info, distance_str):
-    try:
-        course_info = sanitize_text(course_info)
-        if "AWT" in course_info:
-            race_course = "ST"
-            course_type = "AWT"
+def get_turn_count(race_course, surface, distance):
+    if race_course == "ST":
+        if surface == "AWT":
+            if distance <= 1200:
+                return 0.0
+            elif distance <= 1650:
+                return 1.0
+            elif distance <= 2000:
+                return 2.0
         else:
-            parts = course_info.split("/")
-            race_course = parts[0].strip() if len(parts) > 0 else "Unknown"
-            course_type = parts[2].strip() if len(parts) > 2 else "Turf"
-        return get_distance_group(race_course, course_type, int(distance_str))
-    except:
+            if distance <= 1000:
+                return 0.0
+            elif distance <= 1400:
+                return 1.0
+            elif distance <= 1800:
+                return 2.0
+            elif distance <= 2200:
+                return 3.0
+    elif race_course == "HV":
+        if distance <= 1000:
+            return 1.0
+        elif distance <= 1200:
+            return 2.0
+        elif distance <= 1800:
+            return 3.0
+    return 0.0
+
+def get_draw_group(draw, field_size):
+    if field_size <= 0:
         return "Unknown"
+    if draw <= field_size * 0.33:
+        return "Low"
+    elif draw <= field_size * 0.66:
+        return "Middle"
+    else:
+        return "High"
 
-# --- Turn geometry (CountTurn) helpers ---------------------------------------
+def get_jump_type(prev_class, curr_class):
+    if prev_class is None or curr_class is None:
+        return "Same"
+    if curr_class < prev_class:
+        return "Up"
+    elif curr_class > prev_class:
+        return "Down"
+    else:
+        return "Same"
 
-def _norm_course(course: str) -> str:
-    """Normalize race course to canonical short code: 'ST' or 'HV'."""
-    t = (course or "").strip().upper()
-    if t in {"ST", "SHA TIN"} or "SHA TIN" in t:
-        return "ST"
-    if t in {"HV", "HAPPY VALLEY"} or "HAPPY VALLEY" in t:
-        return "HV"
-    return t  # leave unknowns as-is
+def get_distance_group_from_row(course_info, distance_str):
+    course_info = sanitize_text(course_info)
+    distance = safe_int(distance_str)
+    
+    if "AWT" in course_info:
+        race_course = "ST"
+        course_type = "AWT"
+    else:
+        parts = course_info.split("/")
+        race_course = parts[0].strip() if len(parts) > 0 else "ST"
+        course_type = parts[2].strip() if len(parts) > 2 else "Turf"
+    
+    return get_distance_group(race_course, course_type, distance)
 
-def _norm_surface(surface: str) -> str:
-    """Normalize surface to canonical: 'TURF' or 'AWT'."""
-    t = (surface or "").strip().upper()
-    if t in {"TURF", "T"}:
-        return "TURF"
-    if t in {"AWT", "ALL WEATHER", "ALL-WEATHER", "ALL WEATHER TRACK", "DIRT"}:
-        return "AWT"
-    return t  # leave unknowns as-is
-
-# Exact mapping per your specification
-_TURN_COUNT_MAP = {
-    ("ST", "TURF"): {
-        1000: 0.0,
-        1200: 1.0, 1400: 1.0, 1600: 1.0, 1800: 1.0,
-        2000: 2.0, 2200: 2.0, 2400: 2.0,
-    },
-    ("ST", "AWT"): {
-        1200: 1.0,
-        1650: 2.0, 1800: 2.0, 2000: 2.0,
-        2400: 3.0,
-    },
-    ("HV", "TURF"): {
-        1000: 1.0,
-        1200: 1.5,
-        1650: 2.5, 1800: 2.5,
-        2200: 3.5, 2400: 3.5,
-    },
-}
-
-def get_turn_count(race_course: str, surface: str, distance: int | str):
-    """Return CountTurn as float; None if unmapped."""
-    try:
-        d = int(str(distance).strip())
-    except Exception:
-        return None
-    c = _norm_course(race_course)
-    s = _norm_surface(surface)
-    if c == "HV":
-        s = "TURF"
-    m = _TURN_COUNT_MAP.get((c, s))
-    if not m:
-        return None
-    return m.get(d)
-
-def is_straight(turn_count):
-    return turn_count == 0.0
-
-def is_fractional_turn(turn_count):
-    return (turn_count is not None) and (float(turn_count) % 1.0 != 0.0)
-
-def is_one_turn_exact(turn_count):
-    return turn_count == 1.0
-
-def get_draw_group(draw_number, field_size=None):
-    """
-    Map barrier draw to fixed groups (field_size ignored intentionally):
-      Inside   = 1–3
-      InnerMid = 4–6
-      OuterMid = 7–9
-      Wide     = 10–12
-      Outer    = 13+
-    Returns one of: "Inside", "InnerMid", "OuterMid", "Wide", "Outer" or None.
-    """
-    # Accept strings like " 9 " and handle None/"-" etc.
-    if draw_number is None:
-        return None
-    try:
-        d = int(str(draw_number).strip())
-    except (ValueError, TypeError):
-        return None
-
-    if 1 <= d <= 3:
-        return "Inside"
-    if 4 <= d <= 6:
-        return "InnerMid"
-    if 7 <= d <= 9:
-        return "OuterMid"
-    if 10 <= d <= 12:
-        return "Wide"
-    if d >= 13:
-        return "Outer"
-    return None
-
-def get_jump_type(previous_class, current_class):
-    try:
-        prev = int(previous_class)
-        curr = int(current_class)
-        if curr < prev:
-            return "UP"
-        elif curr > prev:
-            return "DOWN"
-        else:
-            return "SAME"
-    except:
-        return "UNKNOWN"
+def get_season_code(race_date):
+    if not race_date:
+        return "Unknown"
+    if isinstance(race_date, str):
+        try:
+            race_date = datetime.strptime(race_date, "%d/%m/%y")
+        except ValueError:
+            return "Unknown"
+    
+    if race_date.month >= 9:
+        return f"{race_date.year%100:02d}/{(race_date.year+1)%100:02d}"
+    else:
+        return f"{(race_date.year-1)%100:02d}/{race_date.year%100:02d}"
