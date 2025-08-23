@@ -1428,14 +1428,32 @@ def upsert_weight_pref(horse_id, weight_pref_list):
                 except sqlite3.IntegrityError:
                     cursor.execute(update_sql, update_params)
                     if cursor.rowcount == 0:
-                        cursor.execute(insert_sql, insert_params)
+                        try:
+                            cursor.execute(insert_sql, insert_params)
+                        except sqlite3.IntegrityError:
+                            log(
+                                "WARNING",
+                                f"Duplicate weight_pref record skipped: HorseID={horse_id}, "
+                                f"Season={row['Season']}, DistanceGroup={row['DistanceGroup']}, "
+                                f"WeightGroup={row['WeightGroup']}",
+                            )
+                            continue
             else:
                 try:
                     cursor.execute(upsert_sql, insert_params)
                 except sqlite3.IntegrityError:
                     cursor.execute(update_sql, update_params)
                     if cursor.rowcount == 0:
-                        cursor.execute(insert_sql, insert_params)
+                        try:
+                            cursor.execute(insert_sql, insert_params)
+                        except sqlite3.IntegrityError:
+                            log(
+                                "WARNING",
+                                f"Duplicate weight_pref record skipped: HorseID={horse_id}, "
+                                f"Season={row['Season']}, DistanceGroup={row['DistanceGroup']}, "
+                                f"WeightGroup={row['WeightGroup']}",
+                            )
+                            continue
             success_count += 1
 
         except Exception as e:
