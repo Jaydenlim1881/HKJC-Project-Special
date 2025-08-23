@@ -9,6 +9,7 @@ from special.utils_special import (
     safe_int, safe_float, parse_weight, parse_lbw,
     get_distance_group, get_turn_count, get_draw_group,
     get_jump_type, get_distance_group_from_row, get_season_code,
+    parse_hkjc_date,
     DB_PATH,
 )
 
@@ -153,11 +154,11 @@ def build_weight_pref_from_dict(race_history_records, horse_id):
 
     # ====== HELPER FUNCTIONS ======
     def get_season_from_row(date_str):
-        try:
-            date = datetime.strptime(sanitize_text(date_str), "%d/%m/%y")
-            return f"{date.year%100:02d}/{(date.year+1)%100:02d}" if date.month >= 9 else f"{(date.year-1)%100:02d}/{date.year%100:02d}"
-        except:
+        date_obj = parse_hkjc_date(sanitize_text(date_str))
+        if not date_obj:
+            log("WARNING", f"Unable to parse date '{date_str}' for season")
             return "Unknown"
+        return get_season_code(date_obj)
 
     def get_course_from_row(course_info):
         try:
@@ -205,11 +206,11 @@ def build_weight_pref_from_dict(race_history_records, horse_id):
             return "Closer"
 
     def get_season_from_row(date_str):
-        try:
-            date = datetime.strptime(sanitize_text(date_str), "%d/%m/%y")
-            return f"{date.year%100:02d}/{(date.year+1)%100:02d}" if date.month >= 9 else f"{(date.year-1)%100:02d}/{date.year%100:02d}"
-        except:
+        date_obj = parse_hkjc_date(sanitize_text(date_str))
+        if not date_obj:
+            log("WARNING", f"Unable to parse date '{date_str}' for season")
             return "Unknown"
+        return get_season_code(date_obj)
 
     def get_course_from_row(course_info):
         try:
@@ -358,7 +359,7 @@ def build_bwr_distance_perf(rows):
             return "Very High"
 
     bwr_perf = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: {"Top3Count": 0, "TotalRuns": 0})))
-    today = datetime.today()
+    today = datetime.now().date()
 
     for row in rows:
         cols = row.find_all("td")
@@ -663,7 +664,7 @@ def build_exact_distance_pref(rows):
 
     distance_pref = defaultdict(lambda: defaultdict(lambda: {"top3": 0, "runs": 0}))
     race_info_list = []
-    today = datetime.today()
+    today = datetime.now().date()
 
     for row in rows:
         cols = row.find_all("td")
@@ -1190,20 +1191,62 @@ def create_weight_pref_table():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS horse_weight_pref (
-            HorseID TEXT,
-            Season TEXT,
-            DistanceGroup TEXT,
-            WeightGroup TEXT,
-            CarriedWeight REAL,  -- ✅ store actual carried weight (avg or rep)
-            Top3Rate REAL,
-            Top3Count INTEGER,
-            TotalRuns INTEGER,
-            LastUpdate TEXT
-        )
-    """)
-    conn.commit()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='horse_weight_pref'")
+    table_exists = cursor.fetchone()
+
+    if not table_exists:
+        cursor.execute("""
+            CREATE TABLE horse_weight_pref (
+                HorseID TEXT,
+                Season TEXT,
+                DistanceGroup TEXT,
+                WeightGroup TEXT,
+                CarriedWeight REAL,  -- ✅ store actual carried weight (avg or rep)
+                Top3Rate REAL,
+                Top3Count INTEGER,
+                TotalRuns INTEGER,
+                LastUpdate TEXT,
+                PRIMARY KEY (HorseID, Season, DistanceGroup, WeightGroup)
+            )
+        """)
+        conn.commit()
+        conn.close()
+        return
+
+    cursor.execute("PRAGMA table_info(horse_weight_pref)")
+    pk_columns = {row[1] for row in cursor.fetchall() if row[5] > 0}
+    required_pk = {"HorseID", "Season", "DistanceGroup", "WeightGroup"}
+
+    if pk_columns != required_pk:
+        log("INFO", "Migrating horse_weight_pref table to add primary key and remove duplicates")
+        cursor.execute("""
+            CREATE TABLE horse_weight_pref_new (
+                HorseID TEXT,
+                Season TEXT,
+                DistanceGroup TEXT,
+                WeightGroup TEXT,
+                CarriedWeight REAL,
+                Top3Rate REAL,
+                Top3Count INTEGER,
+                TotalRuns INTEGER,
+                LastUpdate TEXT,
+                PRIMARY KEY (HorseID, Season, DistanceGroup, WeightGroup)
+            )
+        """)
+        cursor.execute("""
+            INSERT OR IGNORE INTO horse_weight_pref_new (
+                HorseID, Season, DistanceGroup, WeightGroup, CarriedWeight,
+                Top3Rate, Top3Count, TotalRuns, LastUpdate
+            )
+            SELECT
+                HorseID, Season, DistanceGroup, WeightGroup, CarriedWeight,
+                Top3Rate, Top3Count, TotalRuns, LastUpdate
+            FROM horse_weight_pref
+        """)
+        cursor.execute("DROP TABLE horse_weight_pref")
+        cursor.execute("ALTER TABLE horse_weight_pref_new RENAME TO horse_weight_pref")
+        conn.commit()
+
     conn.close()
 
 def create_class_jump_pref_table():
@@ -1331,6 +1374,12 @@ def upsert_weight_pref(horse_id, weight_pref_list):
                     HorseID, Season, DistanceGroup, WeightGroup, CarriedWeight,
                     Top3Rate, Top3Count, TotalRuns, LastUpdate
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(HorseID, Season, DistanceGroup, WeightGroup) DO UPDATE SET
+                    CarriedWeight=excluded.CarriedWeight,
+                    Top3Rate=excluded.Top3Rate,
+                    Top3Count=excluded.Top3Count,
+                    TotalRuns=excluded.TotalRuns,
+                    LastUpdate=excluded.LastUpdate
             """, (
                 horse_id,
                 str(row['Season']),

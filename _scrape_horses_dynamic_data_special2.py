@@ -674,10 +674,13 @@ if __name__ == "__main__":
                         if len(cols) >= 3:
                             try:
                                 date_str = cols[2].get_text().strip()
-                                date = datetime.strptime(date_str, "%d/%m/%y")
-                                season = f"{date.year%100:02d}/{(date.year+1)%100:02d}" if date.month >= 9 else f"{(date.year-1)%100:02d}/{date.year%100:02d}"
+                                date_obj = parse_hkjc_date(date_str)
+                                if not date_obj:
+                                    log("WARNING", f"Unable to parse date '{date_str}' for season detection; skipping row")
+                                    continue
+                                season = get_season_code(date_obj)
                                 break
-                            except:
+                            except Exception:
                                 continue
 
                     if season:
@@ -821,11 +824,11 @@ if __name__ == "__main__":
                         continue
 
                     try:
-                        race_date = datetime.strptime(date_str, "%d/%m/%y")
-                        if race_date.month >= 9:
-                            season_code = f"{race_date.year%100:02d}/{(race_date.year+1)%100:02d}"
-                        else:
-                            season_code = f"{(race_date.year-1)%100:02d}/{race_date.year%100:02d}"
+                        race_date = parse_hkjc_date(date_str)
+                        if not race_date:
+                            log("WARNING", f"Unable to parse date '{date_str}' for weight preference; skipping row")
+                            continue
+                        season_code = get_season_code(race_date)
                         
                         # Parse course info to get race course and type
                         if "AWT" in course_info:
@@ -835,12 +838,12 @@ if __name__ == "__main__":
                             parts = course_info.split("/")
                             race_course = parts[0].strip() if len(parts) > 0 else "Unknown"
                             course_type = parts[2].strip() if len(parts) > 2 else "Turf"
-                    
+
                         distance = int(distance_str)
                         distance_group = get_distance_group(race_course, course_type, distance)
                         if distance_group == "Unknown":
                             log("WARNING", f"Unknown distance group for {race_course}/{course_type} {distance}m")
-                        
+
                         weight_race_history.append({
                             "season": season_code,
                             "finish": placing,
@@ -974,14 +977,11 @@ if __name__ == "__main__":
                     if placing is None or not jockey or not trainer:
                         continue
 
-                    try:
-                        race_date = datetime.strptime(date_str, "%d/%m/%y")
-                        if race_date.month >= 9:
-                            season_code = f"{race_date.year%100:02d}/{(race_date.year+1)%100:02d}"
-                        else:
-                            season_code = f"{(race_date.year-1)%100:02d}/{race_date.year%100:02d}"
-                    except:
+                    race_date = parse_hkjc_date(date_str)
+                    if not race_date:
+                        log("WARNING", f"Unable to parse date '{date_str}' for jockey-trainer combo; skipping row")
                         continue
+                    season_code = get_season_code(race_date)
 
                     key = (season_code, jockey, trainer)
                     jt_combo_map[key]["total"] += 1
