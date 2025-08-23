@@ -1333,6 +1333,12 @@ def upsert_weight_pref(horse_id, weight_pref_list):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
+    # Determine if we need manual UPSERT fallback based on sqlite version
+    sqlite_version = sqlite3.sqlite_version_info
+    use_fallback = sqlite_version < (3, 24, 0)
+    if use_fallback:
+        log("INFO", f"SQLite version {sqlite_version} detected; using fallback upsert logic")
+
     # ====== 2. TABLE VERIFICATION ======
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='horse_weight_pref'")
     if not cursor.fetchone():
@@ -1369,18 +1375,21 @@ def upsert_weight_pref(horse_id, weight_pref_list):
             log("DEBUG", f"  Stats: {top3}/{total} (Rate: {rate})")
 
             # ====== 7. EXECUTE UPSERT ======
-            cursor.execute("""
+            insert_sql = """
                 INSERT INTO horse_weight_pref (
                     HorseID, Season, DistanceGroup, WeightGroup, CarriedWeight,
                     Top3Rate, Top3Count, TotalRuns, LastUpdate
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            upsert_sql = insert_sql + """
                 ON CONFLICT(HorseID, Season, DistanceGroup, WeightGroup) DO UPDATE SET
                     CarriedWeight=excluded.CarriedWeight,
                     Top3Rate=excluded.Top3Rate,
                     Top3Count=excluded.Top3Count,
                     TotalRuns=excluded.TotalRuns,
                     LastUpdate=excluded.LastUpdate
-            """, (
+            """
+            insert_params = (
                 horse_id,
                 str(row['Season']),
                 str(row['DistanceGroup']),
@@ -1389,8 +1398,44 @@ def upsert_weight_pref(horse_id, weight_pref_list):
                 rate,
                 top3,
                 total,
-                last_update
-            ))
+                last_update,
+            )
+
+            update_sql = """
+                UPDATE horse_weight_pref SET
+                    CarriedWeight=?,
+                    Top3Rate=?,
+                    Top3Count=?,
+                    TotalRuns=?,
+                    LastUpdate=?
+                WHERE HorseID=? AND Season=? AND DistanceGroup=? AND WeightGroup=?
+            """
+            update_params = (
+                float(row.get('CarriedWeight', 0)) if row.get('CarriedWeight') else None,
+                rate,
+                top3,
+                total,
+                last_update,
+                horse_id,
+                str(row['Season']),
+                str(row['DistanceGroup']),
+                str(row['WeightGroup']),
+            )
+
+            if use_fallback:
+                try:
+                    cursor.execute(insert_sql, insert_params)
+                except sqlite3.IntegrityError:
+                    cursor.execute(update_sql, update_params)
+                    if cursor.rowcount == 0:
+                        cursor.execute(insert_sql, insert_params)
+            else:
+                try:
+                    cursor.execute(upsert_sql, insert_params)
+                except sqlite3.IntegrityError:
+                    cursor.execute(update_sql, update_params)
+                    if cursor.rowcount == 0:
+                        cursor.execute(insert_sql, insert_params)
             success_count += 1
 
         except Exception as e:
