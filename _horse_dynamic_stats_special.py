@@ -152,6 +152,16 @@ def build_weight_pref_from_dict(race_history_records, horse_id):
     from bs4 import BeautifulSoup
     from bs4.element import Tag
 
+    results = []
+    seen_keys = set()
+    for season, entries in weight_stats.items():
+        for (dist_group, weight_group), stats in entries.items():
+            key = (horse_id, season, dist_group, weight_group)
+            if key in seen_keys:
+                log("WARNING", f"Duplicate key in build_weight_pref_from_dict: {key}")
+                continue
+            seen_keys.add(key)
+
     # ====== HELPER FUNCTIONS ======
     def get_season_from_row(date_str):
         date_obj = parse_hkjc_date(sanitize_text(date_str))
@@ -1323,6 +1333,140 @@ def upsert_horse_rating(
 def upsert_weight_pref(horse_id, weight_pref_list):
     import sqlite3
     
+    log("INFO", f"\nStarting upsert for {horse_id}")
+    log("INFO", f"Received {len(weight_pref_list)} weight preference records")
+    
+    if not weight_pref_list:
+        log("WARNING", "Empty weight_pref_list provided")
+        return
+
+    # ===== DUPLICATE DETECTION =====
+    unique_keys = set()
+    duplicate_count = 0
+    for row in weight_pref_list:
+        key = (horse_id, str(row.get('Season', '')), str(row.get('DistanceGroup', '')), str(row.get('WeightGroup', '')))
+        if key in unique_keys:
+            duplicate_count += 1
+            log("WARNING", f"Duplicate in input data: {key}")
+            log("DEBUG", f"Duplicate row details: {row}")
+        unique_keys.add(key)
+    log("DEBUG", f"Unique keys in input: {len(unique_keys)}, Duplicates: {duplicate_count}")
+    # ===== END DUPLICATE DETECTION =====
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Ensure table exists with correct structure
+    create_weight_pref_table()
+
+    success_count = 0
+    error_count = 0
+    skipped_duplicates = 0
+
+    # Process only unique records
+    processed_keys = set()
+    
+    for i, row in enumerate(weight_pref_list):
+        try:
+            # Validate required fields
+            required_fields = ['Season', 'DistanceGroup', 'WeightGroup']
+            if not all(key in row for key in required_fields):
+                log("WARNING", f"Malformed row (missing keys): {row}")
+                error_count += 1
+                continue
+
+            season = str(row['Season'])
+            distance_group = str(row['DistanceGroup'])
+            weight_group = str(row['WeightGroup'])
+            
+            # Create unique key for this record
+            record_key = (horse_id, season, distance_group, weight_group)
+            
+            # Skip if we've already processed this key in this batch
+            if record_key in processed_keys:
+                log("DEBUG", f"Skipping duplicate record {i+1}: {record_key}")
+                skipped_duplicates += 1
+                continue
+                
+            processed_keys.add(record_key)
+
+            # Check if record already exists in database
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM horse_weight_pref 
+                WHERE HorseID=? AND Season=? AND DistanceGroup=? AND WeightGroup=?
+                """,
+                (horse_id, season, distance_group, weight_group)
+            )
+            exists = cursor.fetchone()[0] > 0
+
+            # Calculate stats
+            top3 = int(row.get("Top3Count", 0))
+            total = int(row.get("TotalRuns", 0))
+            carried_weight = float(row.get('CarriedWeight', 0)) if row.get('CarriedWeight') else None
+            
+            # Calculate rate with small sample adjustment
+            if total > 0:
+                rate = top3 / total
+                if total < 3 and top3 > 0:
+                    rate *= 0.5
+                rate = round(rate, 4)
+            else:
+                rate = 0.0
+                
+            last_update = row.get("LastUpdate") or datetime.now().strftime("%Y/%m/%d %H:%M")
+
+            if exists:
+                # UPDATE existing record
+                update_sql = """
+                    UPDATE horse_weight_pref SET
+                        CarriedWeight = ?,
+                        Top3Rate = ?,
+                        Top3Count = ?,
+                        TotalRuns = ?,
+                        LastUpdate = ?
+                    WHERE HorseID = ? AND Season = ? AND DistanceGroup = ? AND WeightGroup = ?
+                """
+                cursor.execute(update_sql, (
+                    carried_weight, rate, top3, total, last_update,
+                    horse_id, season, distance_group, weight_group
+                ))
+                log("DEBUG", f"Updated existing record: {record_key}")
+            else:
+                # INSERT new record
+                insert_sql = """
+                    INSERT INTO horse_weight_pref (
+                        HorseID, Season, DistanceGroup, WeightGroup, CarriedWeight,
+                        Top3Rate, Top3Count, TotalRuns, LastUpdate
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                cursor.execute(insert_sql, (
+                    horse_id, season, distance_group, weight_group, carried_weight,
+                    rate, top3, total, last_update
+                ))
+                log("DEBUG", f"Inserted new record: {record_key}")
+
+            success_count += 1
+
+        except Exception as e:
+            error_count += 1
+            log("ERROR", f"Failed to upsert record {i+1}: {str(e)}")
+            log("DEBUG", f"Problematic row: {row}")
+
+    try:
+        conn.commit()
+        log("INFO", f"[WEIGHT_UPSERT] Completed - {success_count} successful, {error_count} failed, {skipped_duplicates} duplicates skipped")
+        
+        # Verify insertion
+        cursor.execute("SELECT COUNT(*) FROM horse_weight_pref WHERE HorseID=?", (horse_id,))
+        count = cursor.fetchone()[0]
+        log("INFO", f"Total records for {horse_id} in DB: {count}")
+        
+    except Exception as e:
+        log("ERROR", f"[CRITICAL] Commit failed: {str(e)}")
+        conn.rollback()
+    finally:
+        conn.close()
 
     # ====== 1. INITIAL DEBUG ======
     log("INFO", f"\nStarting upsert for {horse_id}")
@@ -1358,7 +1502,25 @@ def upsert_weight_pref(horse_id, weight_pref_list):
                 error_count += 1
                 continue
 
-            # ====== 5. DATA PROCESSING ======
+            # ====== 5. DUPLICATE CHECK ======
+            cursor.execute(
+                """
+                SELECT WeightGroup FROM horse_weight_pref
+                WHERE HorseID=? AND Season=? AND DistanceGroup=?
+                """,
+                (horse_id, str(row['Season']), str(row['DistanceGroup']))
+            )
+            existing = cursor.fetchone()
+            if existing and existing[0] != str(row['WeightGroup']):
+                log(
+                    "WARNING",
+                    f"Duplicate weight_pref record skipped: HorseID={horse_id}, "
+                    f"Season={row['Season']}, DistanceGroup={row['DistanceGroup']}, "
+                    f"WeightGroup={row['WeightGroup']}",
+                )
+                continue
+
+            # ====== 6. DATA PROCESSING ======
             top3 = int(row.get("Top3Count", 0))
             total = int(row.get("TotalRuns", 0))
             
@@ -1366,7 +1528,7 @@ def upsert_weight_pref(horse_id, weight_pref_list):
             rate = round((top3 / total) if total >= 3 else (top3 / total) * 0.5, 4) if total > 0 else 0.0
             last_update = row.get("LastUpdate") or datetime.now().strftime("%Y/%m/%d %H:%M")
 
-            # ====== 6. DEBUG BEFORE INSERT ======
+            # ====== 7. DEBUG BEFORE INSERT ======
             log("DEBUG", f"\nRecord {i+1}:")
             log("DEBUG", f"  Season: {row['Season']}")
             log("DEBUG", f"  DistGroup: {row['DistanceGroup']}")
@@ -1374,7 +1536,7 @@ def upsert_weight_pref(horse_id, weight_pref_list):
             log("DEBUG", f"  CarriedWeight: {row.get('CarriedWeight', 'None')}")
             log("DEBUG", f"  Stats: {top3}/{total} (Rate: {rate})")
 
-            # ====== 7. EXECUTE UPSERT ======
+            # ====== 8. EXECUTE UPSERT ======
             insert_sql = """
                 INSERT INTO horse_weight_pref (
                     HorseID, Season, DistanceGroup, WeightGroup, CarriedWeight,
