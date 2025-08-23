@@ -4,11 +4,12 @@
 import sys
 # sys.path.append('/Users/calvinlim13/miniforge3/lib/python3.12/site-packages')
 
-from utils_special import (
+from special.utils_special import (
     log, sanitize_text, clean_placing, convert_finish_time,
     safe_int, safe_float, parse_weight, parse_lbw,
     get_distance_group, get_turn_count, get_draw_group,
-    get_jump_type, get_distance_group_from_row, get_season_code
+    get_jump_type, get_distance_group_from_row, get_season_code,
+    DB_PATH,
 )
 
 
@@ -430,7 +431,7 @@ def build_bwr_distance_perf(rows):
 def upsert_hwtr_trend(hwtr_data):
     """Insert or update HWTR performance into horse_hwtr_trend table"""
     import sqlite3
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -584,7 +585,7 @@ def build_hwtr_per_class(rows, horse_id):
 
 def upsert_running_position(data_dict):
     """Insert or update a single race's running position entry"""
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
     last_update = datetime.now().strftime("%Y/%m/%d %H:%M")
@@ -719,7 +720,7 @@ def build_exact_distance_pref(rows):
     return final_result
 
 def upsert_distance_pref(horse_id, season, distance_pref):
-    conn = sqlite3.connect('hkjc_horses_dynamic_special.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     last_update = datetime.now().strftime("%Y/%m/%d %H:%M")
 
@@ -737,9 +738,9 @@ def upsert_distance_pref(horse_id, season, distance_pref):
     ''')
 
     # ✅ Add these to ensure missing columns are added safely
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_distance_pref", "Top3Count", "INTEGER")
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_distance_pref", "TotalRuns", "INTEGER")
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_distance_pref", "LastUpdate", "TEXT")
+    ensure_column_exists(DB_PATH, "horse_distance_pref", "Top3Count", "INTEGER")
+    ensure_column_exists(DB_PATH, "horse_distance_pref", "TotalRuns", "INTEGER")
+    ensure_column_exists(DB_PATH, "horse_distance_pref", "LastUpdate", "TEXT")
 
 
     for season, dists in distance_pref.items():
@@ -764,7 +765,7 @@ def upsert_distance_pref(horse_id, season, distance_pref):
     conn.close()
 
 def create_horse_jockey_combo_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS horse_jockey_combo (
@@ -782,15 +783,15 @@ def create_horse_jockey_combo_table():
     conn.close()
 
 def upsert_horse_jockey_combo(horse_id, rows):
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     last_update = datetime.now().strftime("%Y/%m/%d %H:%M")
 
     # Ensure table and columns exist
     create_horse_jockey_combo_table()
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_jockey_combo", "LastUpdate", "TEXT")
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_jockey_combo", "LastRaceDate", "TEXT")
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_jockey_combo", "LastUpdate", "TEXT")
+    ensure_column_exists(DB_PATH, "horse_jockey_combo", "LastUpdate", "TEXT")
+    ensure_column_exists(DB_PATH, "horse_jockey_combo", "LastRaceDate", "TEXT")
+    ensure_column_exists(DB_PATH, "horse_jockey_combo", "LastUpdate", "TEXT")
 
     # Helper: parse date
     def parse_date(date_str):
@@ -891,7 +892,7 @@ def upsert_horse_jockey_combo(horse_id, rows):
     conn.close()
 
 def create_bwr_distance_perf_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS horse_bwr_distance_pref (
@@ -910,7 +911,7 @@ def create_bwr_distance_perf_table():
     conn.close()
 
 def create_running_style_pref_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS horse_running_style_pref (
@@ -933,7 +934,7 @@ def create_running_style_pref_table():
     conn.commit()
     conn.close()
 
-def migrate_turncount_to_real(db_path="hkjc_horses_dynamic_special.db"):
+def migrate_turncount_to_real(db_path=DB_PATH):
     import sqlite3
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -1021,7 +1022,7 @@ def migrate_turncount_to_real(db_path="hkjc_horses_dynamic_special.db"):
         log("WARNING", f"Failed to rebuild running_style_pref: {e}")
 
 def create_running_position_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS horse_running_position (
@@ -1046,10 +1047,10 @@ def create_running_position_table():
     """)
     conn.commit()
     conn.close()
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_running_position", "Placing", "INTEGER")
+    ensure_column_exists(DB_PATH, "horse_running_position", "Placing", "INTEGER")
 
 def upsert_bwr_distance_perf(horse_id, bwr_perf_list):
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     create_bwr_distance_perf_table()  # Ensure table exists
@@ -1079,7 +1080,7 @@ def upsert_bwr_distance_perf(horse_id, bwr_perf_list):
     conn.close()
 
 def create_trainer_combo_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS horse_trainer_combo (
@@ -1097,7 +1098,7 @@ def create_trainer_combo_table():
     conn.close()
 
 def create_race_field_size_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS race_field_size (
@@ -1113,7 +1114,7 @@ def create_race_field_size_table():
 
 def migrate_jockey_trainer_table():
     """Ensures LastRaceDate column exists"""
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
         cursor.execute("PRAGMA table_info(horse_jockey_trainer_combo)")
@@ -1127,7 +1128,7 @@ def migrate_jockey_trainer_table():
         conn.close()
 
 def create_jockey_trainer_combo_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS horse_jockey_trainer_combo (
@@ -1147,7 +1148,7 @@ def create_jockey_trainer_combo_table():
     conn.close()
 
 def create_draw_pref_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS horse_draw_pref (
@@ -1168,7 +1169,7 @@ def create_draw_pref_table():
     conn.close()
 
 def create_going_pref_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS horse_going_pref (
@@ -1186,7 +1187,7 @@ def create_going_pref_table():
     conn.close()
 
 def create_weight_pref_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -1206,7 +1207,7 @@ def create_weight_pref_table():
     conn.close()
 
 def create_class_jump_pref_table():
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS horse_class_jump_pref (
@@ -1223,7 +1224,7 @@ def create_class_jump_pref_table():
     conn.commit()
     conn.close()
 
-def create_horse_rating_table(db_path="hkjc_horses_dynamic_special.db"):
+def create_horse_rating_table(db_path=DB_PATH):
     import sqlite3
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -1255,7 +1256,7 @@ def upsert_horse_rating(
     official_rating: float,
     rating_start_season: float,
     rating_start_career: float,
-    db_path="hkjc_horses_dynamic_special.db"
+    db_path=DB_PATH
 ):
     import sqlite3
     from datetime import datetime
@@ -1286,7 +1287,7 @@ def upsert_weight_pref(horse_id, weight_pref_list):
     if weight_pref_list:
         log("DEBUG", f"Sample record to upsert: {weight_pref_list[0]}")
 
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     # ====== 2. TABLE VERIFICATION ======
@@ -1366,7 +1367,7 @@ def upsert_weight_pref(horse_id, weight_pref_list):
         conn.close()
 
 def upsert_trainer_combo(horse_id, trainer_combo_dict):
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     for season, trainer_dict in trainer_combo_dict.items():
@@ -1395,7 +1396,7 @@ def upsert_trainer_combo(horse_id, trainer_combo_dict):
     conn.close()
 
 def upsert_going_pref(horse_id, going_pref_dict):
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     last_update = datetime.now().strftime("%Y/%m/%d %H:%M")
 
@@ -1412,9 +1413,9 @@ def upsert_going_pref(horse_id, going_pref_dict):
         );
     ''')
 
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_going_pref", "Top3Count", "INTEGER")
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_going_pref", "TotalRuns", "INTEGER")
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_going_pref", "LastUpdate", "TEXT")
+    ensure_column_exists(DB_PATH, "horse_going_pref", "Top3Count", "INTEGER")
+    ensure_column_exists(DB_PATH, "horse_going_pref", "TotalRuns", "INTEGER")
+    ensure_column_exists(DB_PATH, "horse_going_pref", "LastUpdate", "TEXT")
 
     for season, goings in going_pref_dict.items():
         for going_type, stats in goings.items():
@@ -1442,7 +1443,7 @@ def upsert_going_pref(horse_id, going_pref_dict):
     conn.close()
 
 def upsert_draw_pref(horse_id, draw_pref_dict):
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     last_update = datetime.now().strftime("%Y/%m/%d %H:%M")
 
@@ -1493,7 +1494,7 @@ def upsert_jockey_trainer_combo(horse_id, season, jockey, trainer, top3_count, t
     }
 
     try:
-        conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
         # Calculate success rate with validation
@@ -1795,7 +1796,7 @@ def build_draw_pref(rows):
     return draw_pref
 
 def upsert_course_pref(horse_id, course_pref):
-    conn = sqlite3.connect('hkjc_horses_dynamic_special.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     last_update = datetime.now().strftime("%Y/%m/%d %H:%M")
 
@@ -1814,9 +1815,9 @@ def upsert_course_pref(horse_id, course_pref):
     ''')
 
     # ✅ Add these 3 lines right here to patch older DBs
-    ensure_column_exists("hkjc_horses_dynamic.db", "horse_course_pref", "Top3Count", "INTEGER")
-    ensure_column_exists("hkjc_horses_dynamic.db", "horse_course_pref", "TotalRuns", "INTEGER")
-    ensure_column_exists("hkjc_horses_dynamic.db", "horse_course_pref", "LastUpdate", "TEXT")
+    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_course_pref", "Top3Count", "INTEGER")
+    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_course_pref", "TotalRuns", "INTEGER")
+    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_course_pref", "LastUpdate", "TEXT")
 
     for season, courses in course_pref.items():
         for (race_course, course_type), values in courses.items():
@@ -1842,16 +1843,16 @@ def upsert_class_jump_pref(horse_id, jump_stats):
     Upsert per-season class jump stats into horse_class_jump_pref.
     Applies small-sample adjustment: if TotalRuns < 3 and Top3Count > 0, Top3Rate *= 0.5
     """
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     # Ensure table exists
     create_class_jump_pref_table()
 
     # Ensure columns exist (for older DBs)
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_class_jump_pref", "Top3Count", "INTEGER")
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_class_jump_pref", "TotalRuns", "INTEGER")
-    ensure_column_exists("hkjc_horses_dynamic_special.db", "horse_class_jump_pref", "LastUpdate", "TEXT")
+    ensure_column_exists(DB_PATH, "horse_class_jump_pref", "Top3Count", "INTEGER")
+    ensure_column_exists(DB_PATH, "horse_class_jump_pref", "TotalRuns", "INTEGER")
+    ensure_column_exists(DB_PATH, "horse_class_jump_pref", "LastUpdate", "TEXT")
 
     last_update = datetime.now().strftime("%Y/%m/%d %H:%M")
 
@@ -1887,7 +1888,7 @@ def upsert_class_jump_pref(horse_id, jump_stats):
 
 def fetch_class_jump_pref_ordered(horse_id):
     """Fetch class jump pref ordered by season (newest first) with dynamic season handling"""
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
     # Get current season (automatically handles future seasons)
@@ -1915,7 +1916,7 @@ def fetch_running_style_pref_ordered(horse_id):
     Return horse_running_style_pref rows for a horse with Season sorted newest→oldest.
     Also applies a sensible ordering for StyleBucket.
     """
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     # Get current season for proper sorting
@@ -1947,7 +1948,7 @@ def fetch_running_style_pref_ordered(horse_id):
     
 def fetch_draw_pref_ordered(horse_id):
     """Fetch draw preference rows for a horse ordered by most recent update."""
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute(
         """
@@ -1969,7 +1970,7 @@ def rebuild_running_style_pref(horse_id: str | None = None) -> tuple[int, int]:
     Expects horse_running_position to have:
       HorseID, Season, RaceCourse, CourseType, DistanceGroup, TurnCount, FieldSize, EarlyPos, Placing
     """
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     create_running_style_pref_table()
 
@@ -2055,7 +2056,7 @@ if __name__ == "__main__":
     print("\n[INFO] This module provides helper functions for processing HKJC horse data.")
     print("       It's designed to be imported, not run directly.")
 
-    conn = sqlite3.connect("hkjc_horses_dynamic_special.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE horse_running_position
